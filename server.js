@@ -34,7 +34,7 @@ app.use(cors({
     const allowedOrigins = [
       'http://localhost:3000',       // For local frontend development (if your frontend runs on port 3000)
       // Add other local origins if you use them, e.g., 'http://localhost:3004'
-      'https://yourusername.github.io', // For your deployed frontend on GitHub Pages (replace 'yourusername')
+      'https://ArtGalleryVake.github.io', // For your deployed frontend on GitHub Pages (replace 'yourusername')
       // If your GitHub Pages site is in a subdirectory like /Gallery/, the origin is still 'https://yourusername.github.io'.
       // So, this one entry should cover it.
     ];
