@@ -34,6 +34,7 @@ app.use(cors({
       'http://localhost:3000',
       'http://localhost:3004',
       'https://ArtGalleryVake.github.io', // Replace with YOUR GitHub username
+      'https://backend3-nam9.onrender.com',
       'https://your-render-app.onrender.com' // Your Render app URL
     ];
     
