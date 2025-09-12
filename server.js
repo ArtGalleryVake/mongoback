@@ -179,10 +179,14 @@ app.post("/upload", upload.single("file"), (req, res) => {
     const section = req.body.section || "others";
     const title = req.body.title || "";
     const description = req.body.description || "";
+    const materials = req.body.materials || "";
+    const paintingSize = req.body.paintingSize || "";
 
     console.log('📂 Target section:', section);
     console.log('📝 Title:', title);
     console.log('📝 Description:', description);
+    console.log('🎨 Materials:', materials);
+    console.log('📏 Painting Size:', paintingSize);
 
     const tempPath = req.file.path;
     const finalDir = path.join(__dirname, "uploads", section);
@@ -198,15 +202,23 @@ app.post("/upload", upload.single("file"), (req, res) => {
     fs.renameSync(tempPath, finalPath);
     console.log('✅ File moved successfully');
 
-    // Save metadata if provided
-    if (title || description) {
-      const metadata = {
-        title: title,
-        description: description,
-        uploadDate: new Date().toISOString(),
-        originalName: req.file.originalname,
-        section: section
-      };
+    // Create metadata object - always include all fields
+    const metadata = {
+      title: title,
+      description: description,
+      uploadDate: new Date().toISOString(),
+      originalName: req.file.originalname,
+      section: section
+    };
+    
+    // Always add painting-specific fields for paintings section
+    if (section === "paintings") {
+      metadata.materials = materials;
+      metadata.paintingSize = paintingSize;
+    }
+    
+    // Save metadata if any field has content OR if it's a painting (to maintain structure)
+    if (title || description || materials || paintingSize || section === "paintings") {
       console.log('💾 Saving metadata:', metadata);
       saveMetadata(finalPath, metadata);
     }
@@ -217,13 +229,28 @@ app.post("/upload", upload.single("file"), (req, res) => {
     console.log('📤 Sending success response');
     console.log('File URL:', fileUrl);
 
+    // Create metadata object for response
+    const responseMetadata = {
+      title,
+      description,
+      uploadDate: new Date().toISOString(),
+      originalName: req.file.originalname,
+      section: section
+    };
+    
+    // Add painting-specific fields to response
+    if (section === "paintings") {
+      responseMetadata.materials = materials;
+      responseMetadata.paintingSize = paintingSize;
+    }
+
     res.status(201).json({
       message: "File uploaded successfully!",
       file: {
         filename: req.file.filename,
         url: fileUrl,
         path: finalPath,
-        metadata: { title, description, uploadDate: new Date().toISOString(), originalName: req.file.originalname, section: section }
+        metadata: responseMetadata
       },
       section: section,
     });
