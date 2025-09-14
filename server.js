@@ -4,7 +4,6 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
-import slugify from 'slugify'; // Add this import
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,33 +88,6 @@ const loadMetadata = (imagePath) => {
     console.error('❌ Error loading metadata:', error);
   }
   return null;
-};
-
-// Helper function to create slugs (same as frontend)
-const createSlug = (text) => {
-  if (!text) return '';
-  return simpleSlugify(text, {
-    lower: true,
-    strict: false,
-    remove: /[*+~.()'"!:@„""`']/g,
-    replacement: '-',
-    trim: true,
-    locale: 'ka'
-  });
-};
-
-// Helper function to create unique painting slug (same logic as frontend)
-const createUniquePaintingSlug = (file, filename) => {
-  const title = file.metadata?.title;
-  
-  if (title) {
-    // Use title + filename (without extension) to ensure uniqueness
-    const filenameWithoutExt = filename ? filename.split('.')[0] : 'unknown';
-    return createSlug(`${title}-${filenameWithoutExt}`);
-  } else {
-    // Fallback to filename-based slug
-    return filename ? createSlug(filename.split('.')[0]) : 'unknown';
-  }
 };
 
 // --- FILE STORAGE SETUP ---
@@ -298,81 +270,6 @@ app.post("/upload", upload.single("file"), (req, res) => {
   }
 });
 
-// NEW ROUTE: Get individual painting/author/exhibition by slug
-app.get("/:section/:slug", (req, res) => {
-  console.log(`🎨 Getting individual item: ${req.params.section}/${req.params.slug}`);
-  try {
-    const { section, slug } = req.params;
-    const sectionPath = path.join(__dirname, "uploads", section);
-    
-    console.log('Looking for item in:', sectionPath);
-    console.log('Searching for slug:', slug);
-
-    if (!fs.existsSync(sectionPath)) {
-      console.log('📁 Section directory does not exist');
-      return res.status(404).json({ error: 'Section not found' });
-    }
-
-    const allEntries = fs.readdirSync(sectionPath);
-    let foundFile = null;
-
-    for (const entryName of allEntries) {
-      const entryPath = path.join(sectionPath, entryName);
-      const stat = fs.statSync(entryPath);
-
-      if (stat.isFile()) {
-        const ext = path.extname(entryName).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) {
-          const metadata = loadMetadata(entryPath);
-          
-          // Create the same slug logic as frontend
-          let itemSlug;
-          if (section === 'paintings') {
-            // For paintings, use the unique slug creation
-            const fileData = { metadata, filename: entryName };
-            itemSlug = createUniquePaintingSlug(fileData, entryName);
-          } else if (section === 'authors') {
-            // For authors, use title-based slug
-            itemSlug = metadata?.title 
-              ? createSlug(metadata.title)
-              : "author-" + entryName;
-          } else if (section === 'exhibitions') {
-            // For exhibitions, use title-based slug
-            itemSlug = metadata?.title
-              ? createSlug(metadata.title)
-              : "exhibition-" + entryName.split('.')[0];
-          }
-
-          console.log(`Comparing "${itemSlug}" with "${slug}"`);
-          
-          if (itemSlug === slug) {
-            foundFile = {
-              filename: entryName,
-              url: `/uploads/${section}/${entryName}`,
-              path: entryPath,
-              metadata: metadata || {},
-              creationTime: stat.birthtime || stat.mtime
-            };
-            console.log('✅ Found matching file:', foundFile);
-            break;
-          }
-        }
-      }
-    }
-
-    if (foundFile) {
-      res.json({ file: foundFile });
-    } else {
-      console.log('❌ No file found matching slug:', slug);
-      res.status(404).json({ error: 'Item not found' });
-    }
-
-  } catch (error) {
-    console.error("❌ Error getting individual item:", error);
-    res.status(500).json({ error: "Could not get item" });
-  }
-});
-
 // Get files from a section with metadata AND creation time for sorting
 app.get("/files/:section", (req, res) => {
   console.log(`📋 Getting files for section: ${req.params.section}`);
@@ -504,81 +401,6 @@ app.get("/stats", (req, res) => {
   }
 });
 
-// NEW ROUTE: Get individual painting/author/exhibition by slug (MOVED TO END)
-app.get("/:section/:slug", (req, res) => {
-  console.log(`🎨 Getting individual item: ${req.params.section}/${req.params.slug}`);
-  try {
-    const { section, slug } = req.params;
-    const sectionPath = path.join(__dirname, "uploads", section);
-    
-    console.log('Looking for item in:', sectionPath);
-    console.log('Searching for slug:', slug);
-
-    if (!fs.existsSync(sectionPath)) {
-      console.log('📁 Section directory does not exist');
-      return res.status(404).json({ error: 'Section not found' });
-    }
-
-    const allEntries = fs.readdirSync(sectionPath);
-    let foundFile = null;
-
-    for (const entryName of allEntries) {
-      const entryPath = path.join(sectionPath, entryName);
-      const stat = fs.statSync(entryPath);
-
-      if (stat.isFile()) {
-        const ext = path.extname(entryName).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) {
-          const metadata = loadMetadata(entryPath);
-          
-          // Create the same slug logic as frontend
-          let itemSlug;
-          if (section === 'paintings') {
-            // For paintings, use the unique slug creation
-            const fileData = { metadata, filename: entryName };
-            itemSlug = createUniquePaintingSlug(fileData, entryName);
-          } else if (section === 'authors') {
-            // For authors, use title-based slug
-            itemSlug = metadata?.title 
-              ? createSlug(metadata.title)
-              : "author-" + entryName;
-          } else if (section === 'exhibitions') {
-            // For exhibitions, use title-based slug
-            itemSlug = metadata?.title
-              ? createSlug(metadata.title)
-              : "exhibition-" + entryName.split('.')[0];
-          }
-
-          console.log(`Comparing "${itemSlug}" with "${slug}"`);
-          
-          if (itemSlug === slug) {
-            foundFile = {
-              filename: entryName,
-              url: `/uploads/${section}/${entryName}`,
-              path: entryPath,
-              metadata: metadata || {},
-              creationTime: stat.birthtime || stat.mtime
-            };
-            console.log('✅ Found matching file:', foundFile);
-            break;
-          }
-        }
-      }
-    }
-
-    if (foundFile) {
-      res.json({ file: foundFile });
-    } else {
-      console.log('❌ No file found matching slug:', slug);
-      res.status(404).json({ error: 'Item not found' });
-    }
-
-  } catch (error) {
-    console.error("❌ Error getting individual item:", error);
-    res.status(500).json({ error: "Could not get item" });
-  }
-});
-
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error('💥 Global error handler:', error);
@@ -602,7 +424,6 @@ app.listen(PORT, () => {
   console.log(' - GET /health (health check)');
   console.log(' - POST /upload (file upload with metadata)');
   console.log(' - GET /files/:section (list files with metadata)');
-  console.log(' - GET /:section/:slug (get individual item by slug)'); // NEW!
   console.log(' - GET /stats (upload statistics)');
   console.log(' - DELETE /delete (delete file and metadata)');
   console.log('\n');
