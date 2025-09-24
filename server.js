@@ -78,7 +78,7 @@ app.use(cors({
       'http://localhost:3006',
       'https://ArtGalleryVake.github.io',
       'https://artgalleryvake.com',
-      'https://cloud-back-2.onrender.com', // Keep if this is your deployed backend
+      'https://mongoback-hlx0.onrender.com', // Keep if this is your deployed backend
       'https://your-render-app.onrender.com' // Placeholder
     ];
 
