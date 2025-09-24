@@ -39,9 +39,10 @@ app.use(cors({
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:3004',
+      'http://localhost:3005',
       'https://ArtGalleryVake.github.io',
       'https://artgalleryvake.com',
-      'https://backend3-nam9.onrender.com',
+      'https://cloud-back-2.onrender.com',
       'https://your-render-app.onrender.com'
     ];
 
