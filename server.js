@@ -63,63 +63,30 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS Configuration
-const allowedFrontendOrigins = [
-  'http://localhost:3000', // Your local development server
-  'http://localhost:3004',
-  'http://localhost:3006',
-  'https://ArtGalleryVake.github.io',      // GitHub Pages origin
-  'https://artgalleryvake.github.io',      // Another common GitHub Pages origin
-  'https://artgalleryvake.com',            // Your custom domain
-  'https://www.artgalleryvake.com',        // Your custom domain with www
-];
-
-// NOTE: If your frontend is hosted on GitHub Pages, ensure the actual origin
-// that your browser uses (check browser's network tab or console) matches EXACTLY
-// one of the origins in allowedFrontendOrigins. For GitHub Pages, it's usually
-// 'https://<username>.github.io' or 'https://<orgname>.github.io'.
-
+// CORS Configuration - SIMPLIFIED AND FIXED
 app.use(cors({
-  origin: function(origin, callback) {
-    console.log('🌐 CORS request from origin:', origin);
-
-    // Allow requests with no origin (e.g., server-to-server, Postman, curl)
-    if (!origin) {
-        console.log('✅ CORS allowed for no origin');
-        return callback(null, true);
-    }
-
-    // Check if the requesting origin is in our allowed list
-    if (allowedFrontendOrigins.includes(origin)) {
-      console.log('✅ CORS allowed for origin:', origin);
-      callback(null, true);
-    } else {
-      console.error('❌ CORS blocked origin:', origin);
-      console.error('❌ Allowed origins:', allowedFrontendOrigins);
-      // Return a CORS error if not allowed
-      callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
-    }
-  },
-  methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS", "PATCH"], // Include common HTTP methods
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization",
-    "X-Requested-With",
-    "Accept",
-    "Origin" // Include Origin header
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:3004',
+    'http://localhost:3006',
+    'https://ArtGalleryVake.github.io',
+    'https://artgalleryvake.github.io',
+    'https://artgalleryvake.com',
+    'https://www.artgalleryvake.com'
   ],
-  credentials: true, // If you're using cookies or session IDs
-  optionsSuccessStatus: 200 // For legacy browser support
+  methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
 }));
 
 // Body parsing middleware with increased limits
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve static files from the upload directory
-// This allows you to access images directly via a URL like /uploads/your-image.jpg
-app.use(`/${uploadDir}`, express.static(uploadDir));
-console.log(`🚀 Serving static files from '/${uploadDir}' directory`);
+// FIXED: Serve static files with correct path
+// Use UPLOAD_FOLDER constant instead of uploadDir variable
+app.use(`/${UPLOAD_FOLDER}`, express.static(uploadDir));
+console.log(`🚀 Serving static files from '/${UPLOAD_FOLDER}' directory`);
 
 // --- MULTER SETUP FOR DISK STORAGE ---
 const storage = multer.diskStorage({
@@ -163,7 +130,7 @@ app.get("/", (req, res) => {
     message: "Gallery Backend API is running ✅",
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString(),
-    corsInfo: `CORS configured for origins: ${allowedFrontendOrigins.join(', ')}`
+    corsInfo: "CORS properly configured for multiple origins"
   });
 });
 
@@ -289,9 +256,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     await newGalleryItem.save();
     console.log(`✅ Gallery item saved to MongoDB with ID: ${newGalleryItem._id}`);
 
-    // Construct the URL for accessing the uploaded file via the static server
-    // Example: http://localhost:5001/uploads/1678886400000-image.jpg
-    const fileUrl = `${req.protocol}://${req.get('host')}/${uploadDir}/${req.file.filename}`;
+    // FIXED: Use UPLOAD_FOLDER constant for URL construction
+    const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${req.file.filename}`;
 
     res.status(201).json({
       message: "File uploaded and saved successfully!",
@@ -342,8 +308,8 @@ app.get("/files/:section", async (req, res) => {
     console.log(`✅ Found ${items.length} items for section "${section}" in MongoDB.`);
 
     const filesWithData = items.map(item => {
-      // Construct the URL for accessing the image from the static file server
-      const fileUrl = `${req.protocol}://${req.get('host')}/${uploadDir}/${item.filename}`;
+      // FIXED: Use UPLOAD_FOLDER constant for URL construction
+      const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${item.filename}`;
 
       return {
         _id: item._id,
@@ -388,7 +354,8 @@ app.get("/files/item/:id", async (req, res) => {
       return res.status(404).json({ error: "Item not found.", timestamp: new Date().toISOString() });
     }
 
-    const fileUrl = `${req.protocol}://${req.get('host')}/${uploadDir}/${item.filename}`;
+    // FIXED: Use UPLOAD_FOLDER constant for URL construction
+    const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${item.filename}`;
 
     res.json({
       _id: item._id,
@@ -521,7 +488,8 @@ app.put("/update/:id", upload.single("file"), async (req, res) => {
     }
 
     console.log(`✅ Item ${id} updated successfully.`);
-    const fileUrl = `${req.protocol}://${req.get('host')}/${uploadDir}/${updatedItem.filename}`;
+    // FIXED: Use UPLOAD_FOLDER constant for URL construction
+    const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${updatedItem.filename}`;
 
     res.json({
       message: "Item updated successfully!",
@@ -564,7 +532,6 @@ app.use((error, req, res, next) => {
     return res.status(403).json({
       error: 'CORS Error: Origin not allowed',
       origin: req.get('origin'),
-      allowedOrigins: allowedFrontendOrigins, // Include the list in the error response
       timestamp: new Date().toISOString()
     });
   }
@@ -616,7 +583,7 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 Server started successfully!`);
   console.log(`🌐 Backend running on http://localhost:${PORT}`);
-  console.log(`💾 File storage managed by local filesystem ('${uploadDir}') and MongoDB`);
+  console.log(`💾 File storage managed by local filesystem ('${UPLOAD_FOLDER}') and MongoDB`);
   console.log(`⏰ Started at: ${new Date().toISOString()}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log('\n📋 Available endpoints:');
@@ -624,11 +591,11 @@ app.listen(PORT, () => {
   console.log(' - GET /health (health check)');
   console.log(' - GET /debug-cors (CORS debugging)');
   console.log(' - GET /stats (gallery statistics)');
-  console.log(` - POST /upload (file upload to local storage '${uploadDir}' & MongoDB)`);
+  console.log(` - POST /upload (file upload to local storage '${UPLOAD_FOLDER}' & MongoDB)`);
   console.log(' - GET /files/:section (list items from MongoDB)');
   console.log(' - GET /files/item/:id (get single item by MongoDB ID)');
   console.log(' - PUT /update/:id (update item data and optionally file)');
-  console.log(` - DELETE /delete/:id (delete item from MongoDB and local file in '${uploadDir}')`);
-  console.log(`\n🔒 CORS configured for origins: ${allowedFrontendOrigins.join(', ')}`);
+  console.log(` - DELETE /delete/:id (delete item from MongoDB and local file in '${UPLOAD_FOLDER}')`);
+  console.log(`\n🔒 CORS configured for GitHub Pages and other origins`);
   console.log('\n');
 });
