@@ -5,14 +5,25 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
 
+// --- CLOUDINARY SETUP ---
+import { v2 as cloudinary } from 'cloudinary';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-// Use environment variable for port, fallback to 5001
 const PORT = process.env.PORT || 5001;
 
-// Enhanced logging middleware
+// --- MIDDLEWARE ---
 app.use((req, res, next) => {
   console.log(`\n🔥 ${new Date().toISOString()} - ${req.method} ${req.url}`);
   if (req.body && Object.keys(req.body).length > 0) {
@@ -21,30 +32,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS configuration for production
 app.use(cors({
   origin: function(origin, callback) {
     console.log('🌐 CORS request from origin:', origin);
-    
-    // Allow requests with no origin (like mobile apps, Postman)
     if (!origin) return callback(null, true);
-    
-    // Define allowed origins
+
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:3004',
-      'https://ArtGalleryVake.github.io', // Replace with YOUR GitHub username
+      'https://ArtGalleryVake.github.io',
+      'https://artgalleryvake.com',
       'https://backend3-nam9.onrender.com',
-      'https://your-render-app.onrender.com' // Your Render app URL
+      'https://your-render-app.onrender.com'
     ];
-    
-    // In development, allow all origins
-    if (process.env.NODE_ENV !== 'production') {
-      return callback(null, true);
-    }
-    
-    // In production, check against allowed origins
-    if (allowedOrigins.includes(origin)) {
+
+    if (process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -56,66 +58,15 @@ app.use(cors({
 }));
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
-// --- HELPER FUNCTIONS ---
-const getMetadataPath = (imagePath) => {
-  const parsedPath = path.parse(imagePath);
-  return path.join(parsedPath.dir, parsedPath.name + '.json');
-};
-
-const saveMetadata = (imagePath, metadata) => {
-  const metadataPath = getMetadataPath(imagePath);
-  console.log('💾 Saving metadata to:', metadataPath);
-  try {
-    fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
-    console.log('✅ Metadata saved successfully.');
-  } catch (error) {
-    console.error('❌ Error saving metadata:', error);
-  }
-};
-
-const loadMetadata = (imagePath) => {
-  const metadataPath = getMetadataPath(imagePath);
-  try {
-    if (fs.existsSync(metadataPath)) {
-      const data = fs.readFileSync(metadataPath, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (error) {
-    console.error('❌ Error loading metadata:', error);
-  }
-  return null;
-};
-
-// --- FILE STORAGE SETUP ---
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const tempUploadPath = path.join(__dirname, "uploads", "temp");
-    console.log('📁 Setting up temporary file destination:', tempUploadPath);
-    try {
-      fs.mkdirSync(tempUploadPath, { recursive: true });
-      console.log('✅ Temp directory created/verified');
-      cb(null, tempUploadPath);
-    } catch (error) {
-      console.error('❌ Error creating temp directory:', error);
-      cb(error, null);
-    }
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const filename = uniqueSuffix + path.extname(file.originalname);
-    console.log('📄 Generated filename:', filename);
-    cb(null, filename);
-  },
-});
+// --- MULTER SETUP ---
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
+    fileSize: 10 * 1024 * 1024,
   },
   fileFilter: (req, file, cb) => {
     console.log('🔍 File filter check:');
@@ -132,22 +83,22 @@ const upload = multer({
 });
 
 // --- ROUTES ---
+
 app.get("/", (req, res) => {
   console.log('🏠 Root route accessed');
-  res.json({ 
+  res.json({
     message: "Gallery Backend API is running ✅",
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString()
   });
 });
 
-// Health check endpoint (useful for monitoring)
 app.get("/health", (req, res) => {
   res.json({ status: "healthy", timestamp: new Date().toISOString() });
 });
 
-// Upload file with metadata support
-app.post("/upload", upload.single("file"), (req, res) => {
+// FIXED: Upload file to Cloudinary with proper metadata handling
+app.post("/upload", upload.single("file"), async (req, res) => {
   console.log('\n🚀 UPLOAD ENDPOINT HIT');
 
   if (req.fileValidationError) {
@@ -158,256 +109,263 @@ app.post("/upload", upload.single("file"), (req, res) => {
     console.error('❌ Multer error:', req.error);
     return res.status(400).json({ error: req.error.message });
   }
-
   if (!req.file) {
     console.log('❌ No file uploaded or Multer error occurred.');
     return res.status(400).json({ error: "File upload failed or no file provided." });
   }
 
   try {
-    console.log('📥 After multer processing:');
+    console.log('📥 After multer processing (in memory):');
     console.log(' - req.file exists:', !!req.file);
     console.log(' - req.body:', req.body);
 
-    console.log('📄 File details:');
+    console.log('📄 File details (in memory):');
     console.log(' - Original name:', req.file.originalname);
-    console.log(' - Filename:', req.file.filename);
     console.log(' - Size:', req.file.size, 'bytes');
     console.log(' - Mimetype:', req.file.mimetype);
-    console.log(' - Current path (temp):', req.file.path);
 
+    // FIXED: Ensure all form data is properly extracted and not empty
     const section = req.body.section || "others";
-    const title = req.body.title || "";
-    const description = req.body.description || "";
-    const materials = req.body.materials || "";
-    const paintingSize = req.body.paintingSize || "";
+    const title = req.body.title?.trim() || "";
+    const description = req.body.description?.trim() || "";
+    const materials = req.body.materials?.trim() || "";
+    const paintingSize = req.body.paintingSize?.trim() || "";
 
-    console.log('📂 Target section:', section);
-    console.log('📝 Title:', title);
-    console.log('📝 Description:', description);
-    console.log('🎨 Materials:', materials);
-    console.log('📏 Painting Size:', paintingSize);
+    console.log('📂 Target Cloudinary folder:', section);
+    console.log('📝 Title:', `"${title}"`);
+    console.log('📝 Description:', `"${description}"`);
+    console.log('🎨 Materials:', `"${materials}"`);
+    console.log('📏 Painting Size:', `"${paintingSize}"`);
 
-    const tempPath = req.file.path;
-    const finalDir = path.join(__dirname, "uploads", section);
-    console.log('📁 Creating final section directory:', finalDir);
-
-    fs.mkdirSync(finalDir, { recursive: true });
-    console.log('✅ Section directory ready');
-
-    const finalPath = path.join(finalDir, req.file.filename);
-    console.log('🔄 Moving file from:', tempPath);
-    console.log(' to:', finalPath);
-
-    fs.renameSync(tempPath, finalPath);
-    console.log('✅ File moved successfully');
-
-    // Create metadata object - always include all fields
-    const metadata = {
-      title: title,
-      description: description,
-      uploadDate: new Date().toISOString(),
-      originalName: req.file.originalname,
-      section: section
+    // FIXED: Prepare context with proper key-value pairs (Cloudinary context format)
+    const contextData = {
+      'title': title,
+      'description': description,
+      'uploadDate': new Date().toISOString(),
+      'originalName': req.file.originalname,
+      'section': section
     };
-    
-    // Always add painting-specific fields for paintings section
+
+    // Add painting-specific fields to context if applicable
     if (section === "paintings") {
-      metadata.materials = materials;
-      metadata.paintingSize = paintingSize;
+      contextData['materials'] = materials;
+      contextData['paintingSize'] = paintingSize;
     }
+
+    console.log('🏷️ Context data to be sent:', contextData);
+
+    const cloudinaryOptions = {
+      folder: section,
+      public_id: `${Date.now()}-${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '-')}`,
+      tags: [section, 'gallery-item'],
+      context: contextData, // FIXED: Use the properly formatted context
+      resource_type: 'image',
+    };
+
+    console.log('☁️ Uploading to Cloudinary with options:', cloudinaryOptions);
+
+    const uploadResult = await new Promise((resolve, reject) => {
+      cloudinary.uploader.upload_stream(
+        cloudinaryOptions,
+        (error, result) => {
+          if (error) {
+            console.error('❌ Cloudinary upload error:', error);
+            reject(error);
+          } else {
+            console.log('✅ Cloudinary upload success!');
+            console.log('📋 Upload result context:', result.context);
+            resolve(result);
+          }
+        }
+      ).end(req.file.buffer);
+    });
+
+    console.log('☁️ Full Cloudinary upload result:', JSON.stringify(uploadResult, null, 2));
+
+    if (!uploadResult) {
+      console.error('❌ Upload result is missing!');
+      return res.status(500).json({ error: "Cloudinary upload failed: No result returned." });
+    }
+
+    const secureUrl = uploadResult.secure_url || '';
+    const publicId = uploadResult.public_id || '';
+    const version = uploadResult.version || '';
+    const format = uploadResult.format || '';
     
-    // Save metadata if any field has content OR if it's a painting (to maintain structure)
-    if (title || description || materials || paintingSize || section === "paintings") {
-      console.log('💾 Saving metadata:', metadata);
-      saveMetadata(finalPath, metadata);
-    }
+    // FIXED: Properly extract context data
+    const uploadedContext = uploadResult.context || {};
+    console.log('🏷️ Extracted context from upload result:', uploadedContext);
 
-    // Construct the URL for the file
-    const fileUrl = `/uploads/${section}/${req.file.filename}`;
-
-    console.log('📤 Sending success response');
-    console.log('File URL:', fileUrl);
-
-    // Create metadata object for response
     const responseMetadata = {
-      title,
-      description,
-      uploadDate: new Date().toISOString(),
-      originalName: req.file.originalname,
-      section: section
+      title: uploadedContext.title || title,
+      description: uploadedContext.description || description,
+      uploadDate: uploadedContext.uploadDate || uploadResult.created_at || new Date().toISOString(),
+      originalName: uploadedContext.originalName || req.file.originalname,
+      section: section,
+      publicId: publicId,
+      version: version,
+      format: format,
     };
-    
-    // Add painting-specific fields to response
+
+    // Add painting-specific fields safely
     if (section === "paintings") {
-      responseMetadata.materials = materials;
-      responseMetadata.paintingSize = paintingSize;
+      responseMetadata.materials = uploadedContext.materials || materials;
+      responseMetadata.paintingSize = uploadedContext.paintingSize || paintingSize;
     }
+
+    console.log('📤 Response metadata:', responseMetadata);
 
     res.status(201).json({
-      message: "File uploaded successfully!",
+      message: "File uploaded successfully to Cloudinary!",
       file: {
-        filename: req.file.filename,
-        url: fileUrl,
-        path: finalPath,
-        metadata: responseMetadata
+        filename: req.file.originalname,
+        url: secureUrl,
+        publicId: publicId,
+        metadata: responseMetadata,
       },
       section: section,
     });
 
   } catch (error) {
-    console.error('💥 Upload processing error:', error);
-    console.error('Error stack:', error.stack);
-    if (req.file && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-        console.log('🧹 Cleaned up temporary file:', req.file.path);
-      } catch (cleanupError) {
-        console.error('❌ Error during temp file cleanup:', cleanupError);
-      }
-    }
-    res.status(500).json({ error: "Upload failed: " + error.message });
+    console.error('💥 Cloudinary Upload Error:', error);
+    res.status(500).json({ error: "Cloudinary upload failed: " + error.message });
   }
 });
 
-// Get files from a section with metadata AND creation time for sorting
-app.get("/files/:section", (req, res) => {
+// FIXED: Get files from Cloudinary with proper context handling
+app.get("/files/:section", async (req, res) => {
   console.log(`📋 Getting files for section: ${req.params.section}`);
+  const section = req.params.section;
+
   try {
-    const section = req.params.section;
-    const sectionPath = path.join(__dirname, "uploads", section);
-    console.log('Looking for files in:', sectionPath);
+    const result = await cloudinary.search
+      .expression(`folder:${section}`)
+      .sort_by('created_at', 'desc')
+      .max_results(100)
+      .with_field('context') // IMPORTANT: Request context field
+      .execute();
 
-    if (!fs.existsSync(sectionPath)) {
-      console.log('📁 Section directory does not exist');
-      return res.json({ files: [] });
-    }
+    console.log(`☁️ Found ${result.resources.length} files in Cloudinary for section "${section}".`);
 
-    const allEntries = fs.readdirSync(sectionPath);
-    const filesWithData = [];
+    const filesWithData = result.resources.map(resource => {
+      console.log(`📄 Processing resource: ${resource.public_id}`);
+      console.log('🏷️ Resource context:', resource.context);
+      
+      // FIXED: Properly handle context data
+      const metadataFromContext = resource.context || {};
+      
+      const fileData = {
+        filename: resource.original_filename || resource.public_id,
+        url: resource.secure_url,
+        publicId: resource.public_id,
+        metadata: {
+          title: metadataFromContext.title || '',
+          description: metadataFromContext.description || '',
+          uploadDate: metadataFromContext.uploadDate || resource.created_at,
+          originalName: metadataFromContext.originalName || resource.original_filename,
+          section: section,
+          publicId: resource.public_id,
+          version: resource.version,
+          format: resource.format,
+        },
+        creationTime: new Date(resource.created_at)
+      };
 
-    for (const entryName of allEntries) {
-      const entryPath = path.join(sectionPath, entryName);
-      const stat = fs.statSync(entryPath);
-
-      if (stat.isFile()) {
-        const ext = path.extname(entryName).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) {
-          const metadata = loadMetadata(entryPath);
-          filesWithData.push({
-            filename: entryName,
-            url: `/uploads/${section}/${entryName}`,
-            path: entryPath,
-            metadata: metadata || {},
-            creationTime: stat.birthtime || stat.mtime
-          });
-        }
+      // Add painting-specific fields if they exist in context
+      if (section === "paintings") {
+        fileData.metadata.materials = metadataFromContext.materials || '';
+        fileData.metadata.paintingSize = metadataFromContext.paintingSize || '';
       }
-    }
 
-    filesWithData.sort((a, b) => b.creationTime - a.creationTime);
+      console.log(`📤 Processed file data:`, fileData.metadata);
+      return fileData;
+    });
 
-    console.log(`📄 Found and sorted ${filesWithData.length} files`);
     res.json({ files: filesWithData });
 
   } catch (error) {
-    console.error("❌ Error getting files:", error);
-    res.status(500).json({ error: "Could not get files" });
+    console.error("❌ Error getting files from Cloudinary:", error);
+    if (error.http_code === 404) {
+      res.status(404).json({ error: `Section "${section}" not found or has no files.` });
+    } else {
+      res.status(500).json({ error: "Could not get files from Cloudinary" });
+    }
   }
 });
 
-// Delete file and its metadata
-app.delete("/delete", (req, res) => {
+// Delete file from Cloudinary
+app.delete("/delete", async (req, res) => {
   console.log('🗑️ Delete request:', req.body);
-  const { filename, section } = req.body;
+  const { publicId, section } = req.body;
 
-  if (!filename || !section) {
-    console.log('❌ Missing filename or section');
-    return res.status(400).json({ error: "Filename and section are required" });
+  if (!publicId) {
+    console.log('❌ Missing publicId');
+    return res.status(400).json({ error: "Public ID is required for deletion" });
   }
 
-  const filePath = path.join(__dirname, "uploads", section, filename);
-  const metadataPath = getMetadataPath(filePath);
-
-  console.log('Attempting to delete:', filePath);
-  console.log('And metadata:', metadataPath);
-
   try {
-    let deletedCount = 0;
+    console.log(`☁️ Deleting file with publicId: ${publicId} from section: ${section}`);
+    
+    const destroyResult = await cloudinary.uploader.destroy(publicId);
 
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      console.log(`✅ Image deleted: ${section}/${filename}`);
-      deletedCount++;
-    }
+    console.log('☁️ Cloudinary destroy result:', destroyResult);
 
-    if (fs.existsSync(metadataPath)) {
-      fs.unlinkSync(metadataPath);
-      console.log(`✅ Metadata deleted: ${section}/${filename}.json`);
-      deletedCount++;
-    }
-
-    if (deletedCount > 0) {
-      res.json({ message: "File deleted successfully" });
+    if (destroyResult.result === 'ok') {
+      res.json({ message: "File deleted successfully from Cloudinary" });
+    } else if (destroyResult.result === 'not found') {
+      res.status(404).json({ error: "File not found in Cloudinary" });
     } else {
-      console.log('❌ File not found for deletion');
-      res.status(404).json({ error: "File not found" });
+      res.status(500).json({ error: "Cloudinary deletion failed with unknown status." });
     }
 
   } catch (err) {
-    console.error("❌ Delete error:", err);
-    res.status(500).json({ error: "Could not delete file" });
+    console.error("❌ Cloudinary Delete Error:", err);
+    res.status(500).json({ error: "Could not delete file from Cloudinary" });
   }
 });
 
-// Get all sections and their file counts
-app.get("/stats", (req, res) => {
-  console.log('📊 Getting upload statistics');
+// Get stats from Cloudinary
+app.get("/stats", async (req, res) => {
+  console.log('📊 Getting upload statistics from Cloudinary');
+  const stats = {};
+
   try {
-    const uploadsPath = path.join(__dirname, "uploads");
-    const stats = {};
-    console.log('Checking uploads directory:', uploadsPath);
+    const knownSections = ["paintings", "drawings", "illustrations", "authors", "exhibitions", "others"];
 
-    if (fs.existsSync(uploadsPath)) {
-      const sections = fs.readdirSync(uploadsPath).filter(item => {
-        const itemPath = path.join(uploadsPath, item);
-        const isDir = fs.statSync(itemPath).isDirectory();
-        const notTemp = item !== 'temp';
-        return isDir && notTemp;
-      });
-
-      console.log('Valid sections found:', sections);
-
-      sections.forEach(section => {
-        const sectionPath = path.join(uploadsPath, section);
-        const allFiles = fs.readdirSync(sectionPath);
-        const imageFiles = allFiles.filter(filename => {
-          const ext = path.extname(filename).toLowerCase();
-          return ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext);
-        });
-        stats[section] = imageFiles.length;
-        console.log(` - ${section}: ${imageFiles.length} files`);
-      });
-    } else {
-      console.log('❌ Uploads directory does not exist');
+    for (const section of knownSections) {
+      try {
+        const result = await cloudinary.search
+          .expression(`folder:${section}`)
+          .max_results(1000)
+          .execute();
+        stats[section] = result.resources.length;
+        console.log(` - Section "${section}": ${result.resources.length} assets`);
+      } catch (sectionError) {
+        console.error(`Error fetching stats for section "${section}":`, sectionError);
+        stats[section] = 0; 
+      }
     }
-
-    console.log('Final stats:', stats);
+    
+    console.log('Final Cloudinary stats:', stats);
     res.json({ stats });
 
   } catch (error) {
-    console.error("❌ Stats error:", error);
-    res.status(500).json({ error: "Could not get stats" });
+    console.error("❌ Cloudinary Stats Error:", error);
+    res.status(500).json({ error: "Could not get stats from Cloudinary" });
   }
 });
 
-// Error handling middleware
+// --- ERROR HANDLING ---
+
 app.use((error, req, res, next) => {
   console.error('💥 Global error handler:', error);
-  res.status(500).json({ error: 'Something went wrong!' });
+  if (error.error && error.error.message) {
+    res.status(error.http_code || 500).json({ error: `Cloudinary API Error: ${error.error.message}` });
+  } else {
+    res.status(500).json({ error: 'Something went wrong!' });
+  }
 });
 
-// 404 handler
 app.use((req, res) => {
   console.log('🔍 404 - Route not found:', req.method, req.url);
   res.status(404).json({ error: 'Route not found' });
@@ -416,15 +374,15 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 Server started successfully!`);
   console.log(`🌐 Backend running on http://localhost:${PORT}`);
-  console.log(`📁 File uploads will be saved to: ${path.join(__dirname, 'uploads')}`);
+  console.log(`☁️ File uploads will be managed by Cloudinary`);
   console.log(`⏰ Started at: ${new Date().toISOString()}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log('📋 Available endpoints:');
   console.log(' - GET / (test)');
   console.log(' - GET /health (health check)');
-  console.log(' - POST /upload (file upload with metadata)');
-  console.log(' - GET /files/:section (list files with metadata)');
-  console.log(' - GET /stats (upload statistics)');
-  console.log(' - DELETE /delete (delete file and metadata)');
+  console.log(' - POST /upload (file upload to Cloudinary)');
+  console.log(' - GET /files/:section (list files from Cloudinary)');
+  console.log(' - DELETE /delete (delete file from Cloudinary)');
+  console.log(' - GET /stats (upload statistics from Cloudinary)');
   console.log('\n');
 });
