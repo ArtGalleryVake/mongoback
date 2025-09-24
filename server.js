@@ -66,59 +66,43 @@ app.use((req, res, next) => {
   next();
 });
 
-// FIXED CORS CONFIGURATION
 app.use(cors({
   origin: function(origin, callback) {
     console.log('🌐 CORS request from origin:', origin);
-    
-    // Allow requests with no origin (like server-to-server, Postman, etc.)
-    if (!origin) return callback(null, true);
+    if (!origin) return callback(null, true); // Allow requests with no origin (like server-to-server)
 
-    // Define allowed origins - INCLUDES ALL VARIATIONS
+    // Define allowed origins directly
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:3004',
       'http://localhost:3006',
-      'https://ArtGalleryVake.github.io',      // Original with capitals
-      'https://artgalleryvake.github.io',      // All lowercase version
+      'https://ArtGalleryVake.github.io',
       'https://artgalleryvake.com',
-      'https://www.artgalleryvake.com',        // With www
-      'https://mongoback-hlx0.onrender.com',   // Your Render backend
-      'https://cloud-back-2.onrender.com',     // Alternative backend if needed
+      'https://cloud-back-2.onrender.com', // Keep if this is your deployed backend
+      'https://your-render-app.onrender.com' // Placeholder
     ];
 
-    // Check if the origin is in allowed origins
-    if (allowedOrigins.includes(origin)) {
-      console.log('✅ CORS allowed for origin:', origin);
+    // In production, you might want to restrict this more tightly.
+    // For development, allowing localhost is usually fine.
+    if (process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      console.error('❌ CORS blocked origin:', origin);
-      console.error('❌ Allowed origins:', allowedOrigins);
-      callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
+      callback(new Error('Not allowed by CORS'));
     }
   },
-  methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS", "PATCH"], // Added OPTIONS and PATCH
-  allowedHeaders: [
-    "Content-Type", 
-    "Authorization", 
-    "X-Requested-With",
-    "Accept",
-    "Origin"
-  ],
-  credentials: true,
-  optionsSuccessStatus: 200 // Some legacy browsers choke on 204
+  methods: ["GET", "POST", "DELETE", "PUT"], // Added PUT for potential updates
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
 }));
 
-// Handle preflight requests explicitly
-app.options('*', cors());
-
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from the upload directory
 // This allows you to access images directly via a URL like /uploads/your-image.jpg
 app.use(`/${UPLOAD_FOLDER}`, express.static(uploadDir));
 console.log(`🚀 Serving static files from '/${UPLOAD_FOLDER}' directory`);
+
 
 // --- MULTER SETUP FOR DISK STORAGE ---
 const storage = multer.diskStorage({
@@ -160,85 +144,12 @@ app.get("/", (req, res) => {
   res.json({
     message: "Gallery Backend API is running ✅",
     environment: process.env.NODE_ENV || 'development',
-    timestamp: new Date().toISOString(),
-    corsInfo: "CORS properly configured for multiple origins"
-  });
-});
-
-app.get("/health", (req, res) => {
-  res.json({ 
-    status: "healthy", 
-    timestamp: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
-  });
-});
-
-// DEBUG ENDPOINT TO CHECK CORS
-app.get("/debug-cors", (req, res) => {
-  console.log('🔧 Debug CORS endpoint accessed');
-  res.json({
-    origin: req.get('origin'),
-    host: req.get('host'),
-    userAgent: req.get('user-agent'),
-    referer: req.get('referer'),
-    headers: req.headers,
     timestamp: new Date().toISOString()
   });
 });
 
-// STATS ENDPOINT - MISSING FROM ORIGINAL
-app.get("/stats", async (req, res) => {
-  console.log('📊 Stats endpoint accessed');
-  
-  try {
-    // Get counts by section
-    const sections = await GalleryItem.aggregate([
-      {
-        $group: {
-          _id: "$section",
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    // Get total count
-    const totalItems = await GalleryItem.countDocuments();
-
-    // Get recent uploads (last 7 days)
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    const recentUploads = await GalleryItem.countDocuments({
-      uploadDate: { $gte: weekAgo }
-    });
-
-    // Get recent uploads (last 30 days)
-    const monthAgo = new Date();
-    monthAgo.setDate(monthAgo.getDate() - 30);
-    const monthlyUploads = await GalleryItem.countDocuments({
-      uploadDate: { $gte: monthAgo }
-    });
-
-    const stats = {
-      totalItems,
-      recentUploads,
-      monthlyUploads,
-      sections: sections.reduce((acc, item) => {
-        acc[item._id] = item.count;
-        return acc;
-      }, {}),
-      timestamp: new Date().toISOString()
-    };
-
-    console.log('✅ Stats retrieved successfully:', stats);
-    res.json(stats);
-
-  } catch (error) {
-    console.error('❌ Error fetching stats:', error);
-    res.status(500).json({ 
-      error: "Could not retrieve stats.",
-      details: error.message
-    });
-  }
+app.get("/health", (req, res) => {
+  res.json({ status: "healthy", timestamp: new Date().toISOString() });
 });
 
 // Upload endpoint: Saves file locally and to MongoDB
@@ -311,10 +222,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         if (unlinkErr) console.error('❌ Error cleaning up uploaded file:', unlinkErr);
       });
     }
-    res.status(500).json({ 
-      error: "Failed to save file or its data.",
-      details: error.message
-    });
+    res.status(500).json({ error: "Failed to save file or its data." });
   }
 });
 
@@ -356,10 +264,7 @@ app.get("/files/:section", async (req, res) => {
 
   } catch (error) {
     console.error("❌ Error fetching files from MongoDB:", error);
-    res.status(500).json({ 
-      error: "Could not retrieve files.",
-      details: error.message
-    });
+    res.status(500).json({ error: "Could not retrieve files." });
   }
 });
 
@@ -396,12 +301,10 @@ app.get("/files/item/:id", async (req, res) => {
 
   } catch (error) {
     console.error(`❌ Error fetching item with ID ${id} from MongoDB:`, error);
-    res.status(500).json({ 
-      error: "Could not retrieve item.",
-      details: error.message
-    });
+    res.status(500).json({ error: "Could not retrieve item." });
   }
 });
+
 
 // Delete file from local storage and MongoDB
 app.delete("/delete/:id", async (req, res) => {
@@ -432,10 +335,10 @@ app.delete("/delete/:id", async (req, res) => {
     fs.unlink(filePathToDelete, (err) => {
       if (err) {
         console.error(`❌ Error deleting file ${filePathToDelete}:`, err);
-        // Still return success since DB deletion worked
-        return res.status(200).json({
-          message: "Item deleted from database. File deletion failed but this is not critical.",
-          warning: "Local file could not be deleted"
+        // Decide how to handle this: maybe send a partial success or a warning
+        return res.status(500).json({
+          message: "Item deleted from DB, but failed to delete local file.",
+          error: err.message
         });
       }
       console.log(`✅ File ${filenameToDelete} deleted from filesystem.`);
@@ -444,10 +347,7 @@ app.delete("/delete/:id", async (req, res) => {
 
   } catch (error) {
     console.error(`💥 Error during deletion for item ID ${id}:`, error);
-    res.status(500).json({ 
-      error: "Could not delete file or its data.",
-      details: error.message
-    });
+    res.status(500).json({ error: "Could not delete file or its data." });
   }
 });
 
@@ -536,31 +436,16 @@ app.put("/update/:id", upload.single("file"), async (req, res) => {
         if (unlinkErr) console.error(`❌ Error cleaning up uploaded file after update error:`, unlinkErr);
       });
     }
-    res.status(500).json({ 
-      error: "Could not update item.",
-      details: error.message
-    });
+    res.status(500).json({ error: "Could not update item." });
   }
 });
+
 
 // --- ERROR HANDLING ---
 
 // Generic error handler for Multer or other sync errors
 app.use((error, req, res, next) => {
   console.error('💥 Global error handler:', error);
-
-  // CORS errors
-  if (error.message && error.message.includes('Not allowed by CORS')) {
-    return res.status(403).json({ 
-      error: 'CORS Error: Origin not allowed',
-      origin: req.get('origin'),
-      allowedOrigins: [
-        'http://localhost:3000',
-        'https://artgalleryvake.github.io',
-        'https://artgalleryvake.com'
-      ]
-    });
-  }
 
   // Multer specific error codes might be handled here if they aren't caught earlier
   if (error instanceof multer.MulterError) {
@@ -592,39 +477,28 @@ app.use((error, req, res, next) => {
   }
 
   // Default to 500 for other errors
-  res.status(error.http_code || error.status || 500).json({ 
-    error: error.message || 'Something went wrong!',
-    timestamp: new Date().toISOString()
-  });
+  res.status(error.http_code || error.status || 500).json({ error: error.message || 'Something went wrong!' });
 });
 
 // Handle 404 Not Found routes
 app.use((req, res) => {
   console.log('🔍 404 - Route not found:', req.method, req.url);
-  res.status(404).json({ 
-    error: 'Route not found',
-    method: req.method,
-    url: req.url,
-    timestamp: new Date().toISOString()
-  });
+  res.status(404).json({ error: 'Route not found' });
 });
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Server started successfully!`);
-  console.log(`🌐 Backend running on http://localhost:${PORT}`);
+  console.log(`🌐 Backend running on http://localhost:$`);
   console.log(`💾 File storage managed by local filesystem and MongoDB`);
   console.log(`⏰ Started at: ${new Date().toISOString()}`);
   console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log('📋 Available endpoints:');
   console.log(' - GET / (test)');
   console.log(' - GET /health (health check)');
-  console.log(' - GET /debug-cors (CORS debugging)');
-  console.log(' - GET /stats (gallery statistics)'); // ADDED
   console.log(` - POST /upload (file upload to local storage '${UPLOAD_FOLDER}' & MongoDB)`);
   console.log(' - GET /files/:section (list items from MongoDB)');
   console.log(' - GET /files/item/:id (get single item by MongoDB ID)');
   console.log(' - PUT /update/:id (update item data and optionally file)');
   console.log(` - DELETE /delete/:id (delete item from MongoDB and local file in '${UPLOAD_FOLDER}')`);
-  console.log('\n🔒 CORS configured for multiple origins including GitHub Pages');
   console.log('\n');
 });
