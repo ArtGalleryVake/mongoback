@@ -1,51 +1,50 @@
 import express from "express";
 import cors from "cors";
 import multer from "multer";
-import fs from "fs"; // For file system operations (like deleting files)
-import path from "path";
-import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
+import { v2 as cloudinary } from 'cloudinary';
+import { CloudinaryStorage } from 'multer-storage-cloudinary';
 
-// --- CONFIGURATION ---
-// NOTE: Hardcoding credentials is NOT recommended for production.
-// Consider using environment variables for security and flexibility.
+// --- CLOUDINARY CONFIGURATION ---
+cloudinary.config({
+  cloud_name: 'dryegjume',
+  api_key: '924472115811587',
+  api_secret: 'xAj1DVAvHES_jvgNVSUpUDCcQ9Q',
+});
+
+// --- MONGODB CONFIGURATION ---
 const MONGODB_URI = "mongodb+srv://artgalleryvake_db_user:EaWuUVLQ1WCo0TZm@cluster0.0r7swvv.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
-const UPLOAD_FOLDER = 'uploads'; // Directory to store uploaded images on the server
 const PORT = process.env.PORT || 5001;
 
-// --- FILE SYSTEM SETUP ---
-// Ensure the upload directory exists
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const uploadDir = path.join(__dirname, UPLOAD_FOLDER);
-
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-  console.log(`✅ Created upload directory: ${uploadDir}`);
-}
-
 // --- MONGOOSE SETUP ---
-mongoose.connect(MONGODB_URI) // useNewUrlParser and useUnifiedTopology are deprecated and not needed
+mongoose.connect(MONGODB_URI)
 .then(() => {
   console.log('🚀 Connected to MongoDB successfully!');
 })
 .catch(err => {
   console.error('❌ Error connecting to MongoDB:', err);
-  process.exit(1); // Exit process if unable to connect to DB
+  process.exit(1);
 });
 
-// --- Mongoose Schema ---
+// --- UPDATED MONGOOSE SCHEMA ---
 const galleryItemSchema = new mongoose.Schema({
   section: { type: String, required: true, index: true },
-  filePath: { type: String, required: true }, // Server's absolute path to the file
-  filename: { type: String, required: true }, // Multer's generated filename
-  originalName: { type: String, required: true }, // Original name of the uploaded file
+  filename: { type: String, required: true },
+  originalName: { type: String, required: true },
   title: { type: String, trim: true },
   description: { type: String, trim: true },
   materials: { type: String, trim: true },
   paintingSize: { type: String, trim: true },
+  
+  // Cloudinary specific fields
+  cloudinaryUrl: { type: String, required: true }, // Cloudinary secure URL
+  cloudinaryPublicId: { type: String, required: true }, // For deletion
+  cloudinaryFormat: { type: String }, // Image format (jpg, png, etc.)
+  imageWidth: { type: Number },
+  imageHeight: { type: Number },
+  
   uploadDate: { type: Date, default: Date.now },
-}, { timestamps: true }); // Adds createdAt and updatedAt automatically
+}, { timestamps: true });
 
 const GalleryItem = mongoose.model('GalleryItem', galleryItemSchema);
 
@@ -53,8 +52,6 @@ const GalleryItem = mongoose.model('GalleryItem', galleryItemSchema);
 const app = express();
 
 // --- MIDDLEWARE ---
-
-// Request logger
 app.use((req, res, next) => {
   console.log(`\n🔥 ${new Date().toISOString()} - ${req.method} ${req.url}`);
   if (req.body && Object.keys(req.body).length > 0) {
@@ -63,10 +60,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS Configuration - SIMPLIFIED AND FIXED
+// CORS Configuration
 app.use(cors({
   origin: [
-    'http://localhost:3000',
+    'http://localhost:3001',
     'http://localhost:3004',
     'http://localhost:3006',
     'https://ArtGalleryVake.github.io',
@@ -79,26 +76,25 @@ app.use(cors({
   credentials: true
 }));
 
-// Body parsing middleware with increased limits
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// FIXED: Serve static files with correct path
-// Use UPLOAD_FOLDER constant instead of uploadDir variable
-app.use(`/${UPLOAD_FOLDER}`, express.static(uploadDir));
-console.log(`🚀 Serving static files from '/${UPLOAD_FOLDER}' directory`);
-
-// --- MULTER SETUP FOR DISK STORAGE ---
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir); // Save files to the upload directory
-  },
-  filename: function (req, file, cb) {
-    // Create a unique filename: timestamp-originalfilename.ext
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    // Clean original filename: replace spaces with underscores
-    const safeOriginalName = file.originalname.replace(/\s+/g, '_');
-    cb(null, uniqueSuffix + '-' + safeOriginalName);
+// --- CLOUDINARY MULTER SETUP ---
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'art-gallery', // Cloudinary folder name
+    allowed_formats: ['jpg', 'png', 'jpeg', 'gif', 'webp'],
+    public_id: (req, file) => {
+      // Create unique filename with timestamp
+      const timestamp = Date.now();
+      const safeName = file.originalname.replace(/\s+/g, '_').replace(/[^\w.-]/g, '');
+      return `${timestamp}-${safeName.split('.')[0]}`;
+    },
+    transformation: [
+      { quality: 'auto' }, // Automatic quality optimization
+      { fetch_format: 'auto' } // Automatic format optimization
+    ]
   }
 });
 
@@ -127,9 +123,10 @@ const upload = multer({
 app.get("/", (req, res) => {
   console.log('🏠 Root route accessed');
   res.json({
-    message: "Gallery Backend API is running ✅",
+    message: "Gallery Backend API with Cloudinary is running ✅",
     environment: process.env.NODE_ENV || 'development',
     timestamp: new Date().toISOString(),
+    storage: "Cloudinary",
     corsInfo: "CORS properly configured for multiple origins"
   });
 });
@@ -139,29 +136,16 @@ app.get("/health", (req, res) => {
   res.json({
     status: "healthy",
     timestamp: new Date().toISOString(),
-    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+    mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    storage: "Cloudinary"
   });
 });
 
-// DEBUG ENDPOINT TO CHECK CORS (useful for frontend debugging)
-app.get("/debug-cors", (req, res) => {
-  console.log('🔧 Debug CORS endpoint accessed');
-  res.json({
-    origin: req.get('origin'),
-    host: req.get('host'),
-    userAgent: req.get('user-agent'),
-    referer: req.get('referer'),
-    headers: req.headers,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// STATS ENDPOINT - Provide gallery statistics
+// STATS ENDPOINT
 app.get("/stats", async (req, res) => {
   console.log('📊 Stats endpoint accessed');
 
   try {
-    // Get counts by section
     const sections = await GalleryItem.aggregate([
       {
         $group: {
@@ -171,32 +155,23 @@ app.get("/stats", async (req, res) => {
       }
     ]);
 
-    // Get total count
     const totalItems = await GalleryItem.countDocuments();
 
-    // Get recent uploads (last 7 days)
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
     const recentUploads = await GalleryItem.countDocuments({
       uploadDate: { $gte: weekAgo }
     });
 
-    // Get recent uploads (last 30 days)
-    const monthAgo = new Date();
-    monthAgo.setDate(monthAgo.getDate() - 30);
-    const monthlyUploads = await GalleryItem.countDocuments({
-      uploadDate: { $gte: monthAgo }
-    });
-
     const stats = {
       totalItems,
       recentUploads,
-      monthlyUploads,
       sections: sections.reduce((acc, item) => {
         acc[item._id] = item.count;
         return acc;
       }, {}),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      storage: "Cloudinary"
     };
 
     console.log('✅ Stats retrieved successfully');
@@ -212,55 +187,47 @@ app.get("/stats", async (req, res) => {
   }
 });
 
-
-// Upload endpoint: Saves file locally and to MongoDB
+// UPLOAD ENDPOINT - Updated for Cloudinary
 app.post("/upload", upload.single("file"), async (req, res) => {
   console.log('\n🚀 UPLOAD ENDPOINT HIT');
 
-  // Multer error handling (if any)
-  if (req.fileValidationError) {
-    console.error('❌ Multer fileValidationError:', req.fileValidationError);
-    return res.status(400).json({ error: req.fileValidationError.message });
-  }
-  if (req.error) { // Custom error set by multer config? Less common.
-    console.error('❌ Multer error:', req.error);
-    return res.status(400).json({ error: req.error.message });
-  }
   if (!req.file) {
-    console.log('❌ No file uploaded or Multer error occurred.');
+    console.log('❌ No file uploaded');
     return res.status(400).json({ error: "File upload failed or no file provided." });
   }
 
   try {
-    console.log('📥 File received and saved locally by Multer.');
-    console.log(' - Saved path:', req.file.path);
+    console.log('📥 File uploaded to Cloudinary successfully');
+    console.log(' - Cloudinary URL:', req.file.path);
+    console.log(' - Public ID:', req.file.filename);
     console.log(' - Original name:', req.file.originalname);
-    console.log(' - Mimetype:', req.file.mimetype);
     console.log(' - Body Data:', req.body);
 
-    // Extract metadata from request body
     const { section, title, description, materials, paintingSize } = req.body;
 
-    // Create a new gallery item in MongoDB
+    // Create new gallery item with Cloudinary data
     const newGalleryItem = new GalleryItem({
-      section: section || "others", // Default section if not provided
-      filePath: req.file.path, // Store the full path on the server
-      filename: req.file.filename, // The name Multer gave it (e.g., 1678886400000-image.jpg)
-      originalName: req.file.originalname, // The original name (e.g., my photo.jpg)
+      section: section || "others",
+      filename: req.file.filename, // Cloudinary public_id
+      originalName: req.file.originalname,
       title: title ? title.trim() : "",
       description: description ? description.trim() : "",
       materials: materials ? materials.trim() : "",
       paintingSize: paintingSize ? paintingSize.trim() : "",
+      
+      // Cloudinary specific data
+      cloudinaryUrl: req.file.path, // This is the secure_url from Cloudinary
+      cloudinaryPublicId: req.file.filename, // Public ID for deletion
+      cloudinaryFormat: req.file.format,
+      imageWidth: req.file.width,
+      imageHeight: req.file.height
     });
 
     await newGalleryItem.save();
     console.log(`✅ Gallery item saved to MongoDB with ID: ${newGalleryItem._id}`);
 
-    // FIXED: Use UPLOAD_FOLDER constant for URL construction
-    const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${req.file.filename}`;
-
     res.status(201).json({
-      message: "File uploaded and saved successfully!",
+      message: "File uploaded to Cloudinary and saved successfully!",
       item: {
         _id: newGalleryItem._id,
         section: newGalleryItem.section,
@@ -271,64 +238,67 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         materials: newGalleryItem.materials,
         paintingSize: newGalleryItem.paintingSize,
         uploadDate: newGalleryItem.uploadDate,
-        url: fileUrl // Provide the URL to access the image
+        url: newGalleryItem.cloudinaryUrl, // Cloudinary URL
+        width: newGalleryItem.imageWidth,
+        height: newGalleryItem.imageHeight
       }
     });
 
   } catch (error) {
-    console.error('💥 MongoDB Save or Upload Error:', error);
-    // Clean up the partially uploaded file if saving to DB failed
-    if (req.file && req.file.path) {
-      fs.unlink(req.file.path, (unlinkErr) => {
-        if (unlinkErr) console.error(`❌ Error cleaning up uploaded file ${req.file.path}:`, unlinkErr);
-      });
+    console.error('💥 Error saving to MongoDB:', error);
+    // If MongoDB save fails, try to delete from Cloudinary
+    if (req.file && req.file.filename) {
+      try {
+        await cloudinary.uploader.destroy(req.file.filename);
+        console.log('🗑️ Cleaned up Cloudinary upload after error');
+      } catch (deleteError) {
+        console.error('❌ Error cleaning up Cloudinary upload:', deleteError);
+      }
     }
+    
     res.status(500).json({
-      error: "Failed to save file or its data.",
+      error: "Failed to save file data to database.",
       details: error.message,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// Get items from MongoDB based on section
+// GET FILES BY SECTION - Updated for Cloudinary
 app.get("/files/:section", async (req, res) => {
   const { section } = req.params;
   console.log(`📋 Getting files for section: ${section}`);
 
   if (!section) {
-    return res.status(400).json({ error: "Section parameter is required.", timestamp: new Date().toISOString() });
+    return res.status(400).json({ error: "Section parameter is required." });
   }
 
   try {
     const items = await GalleryItem.find({ section: section })
-      .sort({ uploadDate: -1 }) // Sort by upload date, newest first
+      .sort({ uploadDate: -1 })
       .exec();
 
-    console.log(`✅ Found ${items.length} items for section "${section}" in MongoDB.`);
+    console.log(`✅ Found ${items.length} items for section "${section}"`);
 
-    const filesWithData = items.map(item => {
-      // FIXED: Use UPLOAD_FOLDER constant for URL construction
-      const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${item.filename}`;
-
-      return {
-        _id: item._id,
-        section: item.section,
-        filename: item.filename,
-        originalName: item.originalName,
-        title: item.title,
-        description: item.description,
-        materials: item.materials,
-        paintingSize: item.paintingSize,
-        uploadDate: item.uploadDate,
-        url: fileUrl // Provide the local URL
-      };
-    });
+    const filesWithData = items.map(item => ({
+      _id: item._id,
+      section: item.section,
+      filename: item.filename,
+      originalName: item.originalName,
+      title: item.title,
+      description: item.description,
+      materials: item.materials,
+      paintingSize: item.paintingSize,
+      uploadDate: item.uploadDate,
+      url: item.cloudinaryUrl, // Use Cloudinary URL
+      width: item.imageWidth,
+      height: item.imageHeight
+    }));
 
     res.json({ files: filesWithData });
 
   } catch (error) {
-    console.error(`❌ Error fetching files from MongoDB for section "${section}":`, error);
+    console.error(`❌ Error fetching files for section "${section}":`, error);
     res.status(500).json({
       error: "Could not retrieve files.",
       details: error.message,
@@ -337,13 +307,13 @@ app.get("/files/:section", async (req, res) => {
   }
 });
 
-// Get a single item by its MongoDB ID
+// GET SINGLE ITEM BY ID
 app.get("/files/item/:id", async (req, res) => {
   const { id } = req.params;
   console.log(`📋 Getting single file by ID: ${id}`);
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ error: "Invalid ID format.", timestamp: new Date().toISOString() });
+    return res.status(400).json({ error: "Invalid ID format." });
   }
 
   try {
@@ -351,11 +321,8 @@ app.get("/files/item/:id", async (req, res) => {
 
     if (!item) {
       console.log(`❌ Item with ID ${id} not found.`);
-      return res.status(404).json({ error: "Item not found.", timestamp: new Date().toISOString() });
+      return res.status(404).json({ error: "Item not found." });
     }
-
-    // FIXED: Use UPLOAD_FOLDER constant for URL construction
-    const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${item.filename}`;
 
     res.json({
       _id: item._id,
@@ -367,11 +334,13 @@ app.get("/files/item/:id", async (req, res) => {
       materials: item.materials,
       paintingSize: item.paintingSize,
       uploadDate: item.uploadDate,
-      url: fileUrl
+      url: item.cloudinaryUrl, // Use Cloudinary URL
+      width: item.imageWidth,
+      height: item.imageHeight
     });
 
   } catch (error) {
-    console.error(`❌ Error fetching item with ID ${id} from MongoDB:`, error);
+    console.error(`❌ Error fetching item with ID ${id}:`, error);
     res.status(500).json({
       error: "Could not retrieve item.",
       details: error.message,
@@ -380,69 +349,65 @@ app.get("/files/item/:id", async (req, res) => {
   }
 });
 
-// Delete file from local storage and MongoDB
+// DELETE ENDPOINT - Updated for Cloudinary
 app.delete("/delete/:id", async (req, res) => {
   const { id } = req.params;
   console.log(`🗑️ Delete request for item ID: ${id}`);
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ error: "Invalid ID format.", timestamp: new Date().toISOString() });
+    return res.status(400).json({ error: "Invalid ID format." });
   }
 
   try {
-    // Find the item first to get the filePath
     const item = await GalleryItem.findById(id).exec();
 
     if (!item) {
-      console.log(`❌ Item with ID ${id} not found in MongoDB.`);
-      return res.status(404).json({ error: "Item not found.", timestamp: new Date().toISOString() });
+      console.log(`❌ Item with ID ${id} not found.`);
+      return res.status(404).json({ error: "Item not found." });
     }
 
-    const filePathToDelete = item.filePath;
-    const filenameToDelete = item.filename;
+    const cloudinaryPublicId = item.cloudinaryPublicId;
 
-    // Delete from MongoDB
-    await GalleryItem.findByIdAndDelete(id).exec(); // Use await
+    // Delete from MongoDB first
+    await GalleryItem.findByIdAndDelete(id).exec();
     console.log(`✅ Item ${id} deleted from MongoDB.`);
 
-    // Delete from local filesystem
-    fs.unlink(filePathToDelete, (err) => {
-      if (err) {
-        console.error(`❌ Error deleting file ${filenameToDelete}:`, err);
-        // Return success for DB deletion, but warn about file deletion failure
-        return res.status(200).json({
-          message: "Item deleted from database. However, file deletion failed.",
-          warning: `Could not delete local file: ${err.message}`,
-          timestamp: new Date().toISOString()
-        });
-      }
-      console.log(`✅ File ${filenameToDelete} deleted from filesystem.`);
-      res.json({ message: "File and its data deleted successfully.", timestamp: new Date().toISOString() });
+    // Delete from Cloudinary
+    try {
+      const result = await cloudinary.uploader.destroy(cloudinaryPublicId);
+      console.log(`✅ Image deleted from Cloudinary:`, result);
+    } catch (cloudinaryError) {
+      console.error(`❌ Error deleting from Cloudinary:`, cloudinaryError);
+      // Don't fail the whole request if Cloudinary deletion fails
+    }
+
+    res.json({ 
+      message: "Item deleted successfully from database and Cloudinary.", 
+      timestamp: new Date().toISOString() 
     });
 
   } catch (error) {
     console.error(`💥 Error during deletion for item ID ${id}:`, error);
     res.status(500).json({
-      error: "Could not delete file or its data.",
+      error: "Could not delete item.",
       details: error.message,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// Update Endpoint
+// UPDATE ENDPOINT - Updated for Cloudinary
 app.put("/update/:id", upload.single("file"), async (req, res) => {
   const { id } = req.params;
   console.log(`🔄 Update request for item ID: ${id}`);
 
   if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ error: "Invalid ID format.", timestamp: new Date().toISOString() });
+    return res.status(400).json({ error: "Invalid ID format." });
   }
 
   try {
     const { section, title, description, materials, paintingSize } = req.body;
     const updateData = {
-      // Only include fields if they are provided in the request body
       ...(section !== undefined && { section: section.trim() }),
       ...(title !== undefined && { title: title.trim() }),
       ...(description !== undefined && { description: description.trim() }),
@@ -450,46 +415,53 @@ app.put("/update/:id", upload.single("file"), async (req, res) => {
       ...(paintingSize !== undefined && { paintingSize: paintingSize.trim() }),
     };
 
-    // Handle new file upload
+    // Handle new file upload to Cloudinary
     if (req.file) {
-      console.log('🔄 New file uploaded for update:', req.file.filename);
+      console.log('🔄 New file uploaded to Cloudinary for update:', req.file.filename);
+      
       const existingItem = await GalleryItem.findById(id).exec();
       if (!existingItem) {
-        // Clean up the uploaded file if the item to update wasn't found
-        fs.unlink(req.file.path, () => {});
-        return res.status(404).json({ error: "Item to update not found.", timestamp: new Date().toISOString() });
+        // Try to clean up the new Cloudinary upload
+        try {
+          await cloudinary.uploader.destroy(req.file.filename);
+        } catch (cleanupError) {
+          console.error('Error cleaning up new upload:', cleanupError);
+        }
+        return res.status(404).json({ error: "Item to update not found." });
       }
 
-      // Delete the old file from the filesystem
-      fs.unlink(existingItem.filePath, (err) => {
-        if (err) console.error(`❌ Error deleting old file ${existingItem.filePath}:`, err);
-      });
+      // Delete old image from Cloudinary
+      try {
+        await cloudinary.uploader.destroy(existingItem.cloudinaryPublicId);
+        console.log('🗑️ Old image deleted from Cloudinary');
+      } catch (deleteError) {
+        console.error('❌ Error deleting old image from Cloudinary:', deleteError);
+      }
 
-      // Add new file details to updateData
-      updateData.filePath = req.file.path;
+      // Add new Cloudinary data to updateData
       updateData.filename = req.file.filename;
       updateData.originalName = req.file.originalname;
+      updateData.cloudinaryUrl = req.file.path;
+      updateData.cloudinaryPublicId = req.file.filename;
+      updateData.cloudinaryFormat = req.file.format;
+      updateData.imageWidth = req.file.width;
+      updateData.imageHeight = req.file.height;
     }
 
-    // If no fields to update and no file was uploaded, return early
-    if (Object.keys(updateData).length === 0 && !req.file) {
-      return res.status(400).json({ error: "No update data or file provided.", timestamp: new Date().toISOString() });
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ error: "No update data provided." });
     }
 
     const updatedItem = await GalleryItem.findByIdAndUpdate(id, updateData, {
-      new: true, // Return the updated document
-      runValidators: true, // Ensure Mongoose validators are run
+      new: true,
+      runValidators: true,
     }).exec();
 
     if (!updatedItem) {
-      // Clean up uploaded file if item was not found for update
-      if (req.file) fs.unlink(req.file.path, () => {});
-      return res.status(404).json({ error: "Item not found for update.", timestamp: new Date().toISOString() });
+      return res.status(404).json({ error: "Item not found for update." });
     }
 
     console.log(`✅ Item ${id} updated successfully.`);
-    // FIXED: Use UPLOAD_FOLDER constant for URL construction
-    const fileUrl = `${req.protocol}://${req.get('host')}/${UPLOAD_FOLDER}/${updatedItem.filename}`;
 
     res.json({
       message: "Item updated successfully!",
@@ -503,18 +475,14 @@ app.put("/update/:id", upload.single("file"), async (req, res) => {
         materials: updatedItem.materials,
         paintingSize: updatedItem.paintingSize,
         uploadDate: updatedItem.uploadDate,
-        url: fileUrl
+        url: updatedItem.cloudinaryUrl,
+        width: updatedItem.imageWidth,
+        height: updatedItem.imageHeight
       }
     });
 
   } catch (error) {
     console.error(`💥 Error during update for item ID ${id}:`, error);
-    // If a file was uploaded during the update and an error occurred, clean it up.
-    if (req.file) {
-      fs.unlink(req.file.path, (unlinkErr) => {
-        if (unlinkErr) console.error(`❌ Error cleaning up uploaded file after update error:`, unlinkErr);
-      });
-    }
     res.status(500).json({
       error: "Could not update item.",
       details: error.message,
@@ -527,50 +495,27 @@ app.put("/update/:id", upload.single("file"), async (req, res) => {
 app.use((error, req, res, next) => {
   console.error('💥 Global error handler:', error);
 
-  // Specific CORS error handling
-  if (error.message && error.message.includes('Not allowed by CORS')) {
-    return res.status(403).json({
-      error: 'CORS Error: Origin not allowed',
-      origin: req.get('origin'),
-      timestamp: new Date().toISOString()
-    });
-  }
-
-  // Multer errors
   if (error instanceof multer.MulterError) {
     let errorMessage = `Multer error: ${error.message}`;
     if (error.code === 'LIMIT_FILE_SIZE') {
       errorMessage = `File too large. Maximum file size is 10MB.`;
-    } else if (error.code === 'LIMIT_FILE_COUNT') {
-      errorMessage = `Too many files uploaded.`;
-    } else if (error.code === 'LIMIT_FIELD_COUNT') {
-      errorMessage = `Too many fields.`;
     }
-    return res.status(400).json({ error: errorMessage, timestamp: new Date().toISOString() });
+    return res.status(400).json({ error: errorMessage });
   }
 
-  // Mongoose validation errors
   if (error.name === 'ValidationError') {
     const messages = Object.values(error.errors).map(err => err.message);
-    return res.status(400).json({ error: 'Validation Error', details: messages, timestamp: new Date().toISOString() });
+    return res.status(400).json({ error: 'Validation Error', details: messages });
   }
 
-  // Mongoose CastError (e.g., invalid ID format)
-  if (error.name === 'CastError') {
-    return res.status(400).json({ error: 'Invalid ID format.', timestamp: new Date().toISOString() });
-  }
-
-  // Default to 500 for other errors
-  res.status(error.http_code || error.status || 500).json({
+  res.status(500).json({
     error: error.message || 'Something went wrong!',
     timestamp: new Date().toISOString()
   });
 });
 
-// --- 404 Not Found Handler ---
-// This should be the last middleware
+// --- 404 Handler ---
 app.use((req, res) => {
-  console.log('🔍 404 - Route not found:', req.method, req.url);
   res.status(404).json({
     error: 'Route not found',
     method: req.method,
@@ -583,19 +528,17 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 Server started successfully!`);
   console.log(`🌐 Backend running on http://localhost:${PORT}`);
-  console.log(`💾 File storage managed by local filesystem ('${UPLOAD_FOLDER}') and MongoDB`);
+  console.log(`☁️  File storage: Cloudinary (dryegjume)`);
+  console.log(`💾 Database: MongoDB Atlas`);
   console.log(`⏰ Started at: ${new Date().toISOString()}`);
-  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log('\n📋 Available endpoints:');
   console.log(' - GET / (test)');
   console.log(' - GET /health (health check)');
-  console.log(' - GET /debug-cors (CORS debugging)');
   console.log(' - GET /stats (gallery statistics)');
-  console.log(` - POST /upload (file upload to local storage '${UPLOAD_FOLDER}' & MongoDB)`);
+  console.log(' - POST /upload (file upload to Cloudinary & MongoDB)');
   console.log(' - GET /files/:section (list items from MongoDB)');
   console.log(' - GET /files/item/:id (get single item by MongoDB ID)');
   console.log(' - PUT /update/:id (update item data and optionally file)');
-  console.log(` - DELETE /delete/:id (delete item from MongoDB and local file in '${UPLOAD_FOLDER}')`);
-  console.log(`\n🔒 CORS configured for GitHub Pages and other origins`);
-  console.log('\n');
+  console.log(' - DELETE /delete/:id (delete item from MongoDB and Cloudinary)');
+  console.log('\n☁️  Images now stored permanently in Cloudinary!');
 });
